@@ -3329,6 +3329,215 @@ def compute_centerline_landmarks_for_aorta_type_2(
     return True
 
 
+def compute_centerline_landmarks_for_aorta_type_3(
+    segm_folder,
+    lm_folder,
+    verbose,
+    quiet,
+    write_log_file,
+    output_folder,
+    use_ts_org_segmentations=True,
+):
+    """
+    Type 3 is a single aorta with start point at center of the part of 
+    the descending aorta that touches the diaphragm
+    end landmark is at point that is geodistically the furthest away on the aorta+LV surface
+    
+    """
+    start_p_out_file = f"{lm_folder}aorta_start_point.txt"
+    end_p_out_file = f"{lm_folder}aorta_end_point.txt"
+    sdf_name = f"{segm_folder}out_of_scan_sdf.nii.gz"
+    aorta_name = f"{segm_folder}aorta_lumen_extended.nii.gz"
+    if use_ts_org_segmentations:
+        aorta_name = f"{segm_folder}aorta_lumen_extended_ts_org.nii.gz"
+    overlap_name_1 = f"{segm_folder}aorta_side_region.nii.gz"
+    debug = False
+
+    if os.path.exists(start_p_out_file) and os.path.exists(end_p_out_file):
+        if verbose:
+            print(f"{start_p_out_file} and {end_p_out_file} already exists - skipping")
+        return True
+
+    if verbose:
+        print(f"Computing {start_p_out_file} and {end_p_out_file}")
+
+    if not os.path.exists(sdf_name):
+        msg = f"Out-of-scan SDF {sdf_name} not found. Can not compute centerline landmarks for type 3"
+        if not quiet:
+            print(msg)
+        if write_log_file:
+            write_message_to_log_file(
+                base_dir=output_folder, message=msg, level="error"
+            )
+        return False
+
+    
+    """
+    Section to get aorta interection with diaphragm point
+    Based on FOV 5 where the aorta has lower bound on diaphragm
+    """
+
+    #Read the signed density function file, measure of boundry condition. 
+    sdf_img = read_nifti_with_logging_cached(
+        sdf_name, False, quiet, write_log_file, output_folder
+    )
+    if sdf_img is None:
+        return False
+    
+    sdf_np = sitk.GetArrayFromImage(sdf_img)
+    label_img = read_nifti_with_logging_cached(
+        aorta_name, verbose, quiet, write_log_file, output_folder
+    )
+    if label_img is None:
+        return False
+    
+    
+    label_img_np = sitk.GetArrayFromImage(label_img)
+    spacing = label_img.GetSpacing()
+    max_space = np.max(np.asarray(spacing))
+    # overlap_dist = 3.0
+    overlap_dist = max(3, 3 * max_space)
+    # overlap_dist = 3.0
+    
+    # Find the part of the aorta that hits the side of the scan
+    overlap_region = label_img_np & (sdf_np < overlap_dist)
+    if np.sum(overlap_region) == 0:
+        msg = f"No part of the descending aorta touch the side of the scan - and it should for type 5. Can not compute start {start_p_out_file}"
+        if not quiet:
+            print(msg)
+        if write_log_file:
+            write_message_to_log_file(
+                base_dir=output_folder, message=msg, level="error"
+            )
+        return False
+    
+    if debug:
+        img_o = sitk.GetImageFromArray(overlap_region.astype(int))
+        img_o.CopyInformation(label_img)
+        img_o = sitk.Cast(img_o, sitk.sitkInt16)
+    
+        print(f"Debug: saving {overlap_name_1}")
+        sitk.WriteImage(img_o, overlap_name_1)
+
+    regions = get_components_over_certain_size_as_individual_volumes(
+        overlap_region, 20, 2
+    )
+
+    if regions is None:
+        msg = f"Aorta region that hits the side of scan is too small for type 3. For {aorta_name}"
+        if not quiet:
+            print(msg)
+        if write_log_file:
+            write_message_to_log_file(
+                base_dir=output_folder, message=msg, level="error"
+            )
+        return False
+    
+    
+    if len(regions) != 1:
+        msg = f"Found more than one region of the aorta that touches the side of the scan. It should be 1 for type 3. For {aorta_name}"
+        if not quiet:
+            print(msg)
+        if write_log_file:
+            write_message_to_log_file(
+                base_dir=output_folder, message=msg, level="error"
+            )
+        return False
+    
+    
+    com_np = measurements.center_of_mass(regions[0])
+    # Do the transpose of the coordinates (SimpleITK vs. numpy)
+    com_np = [com_np[2], com_np[1], com_np[0]]
+    com_phys_1 = label_img.TransformIndexToPhysicalPoint(
+        [int(com_np[0]), int(com_np[1]), int(com_np[2])]
+    )
+    
+    # Make sure that the landmark is not touching the side of the scan
+    # Get min and max x and y in physical coordinates
+    size = label_img.GetSize()
+    min_x_phys = label_img.TransformIndexToPhysicalPoint([0, 0, 0])[0]
+    max_x_phys = label_img.TransformIndexToPhysicalPoint([size[0] - 1, 0, 0])[0]
+    min_y_phys = label_img.TransformIndexToPhysicalPoint([0, 0, 0])[1]
+    max_y_phys = label_img.TransformIndexToPhysicalPoint([0, size[1] - 1, 0])[1]
+    slack = 10.0  # mm
+    dist_1 = min(
+        abs(max_x_phys - com_phys_1[0]),
+        abs(min_x_phys - com_phys_1[0]),
+        abs(max_y_phys - com_phys_1[1]),
+        abs(min_y_phys - com_phys_1[1])
+    )
+
+    if verbose:
+        print(
+            f"Type 5 descending aorta landmark distances to side of scan: {dist_1:.1f}"
+        )
+    if dist_1 < slack:
+        msg = f"A landmark is too close to the side of the scan - and it should not for type 5. Distances to borders: {dist_1:.1f} mm. For {aorta_name}"
+        if not quiet:
+            print(msg)
+        if write_log_file:
+            write_message_to_log_file(
+                base_dir=output_folder, message=msg, level="error"
+            )
+        return False
+    
+    
+    """
+    Section to get start of aorta as is done in type I and V
+    """
+    aorta_surf = convert_label_map_to_surface(
+        aorta_name, segment_id=1, only_largest_component=True
+    )
+    
+    if aorta_surf is None:
+        msg = f"Could not compute aorta surface from {aorta_name}"
+        if not quiet:
+            print(msg)
+        if write_log_file:
+            write_message_to_log_file(
+                base_dir=output_folder, message=msg, level="error"
+            )
+        return False
+    
+    locator = vtk.vtkPointLocator()
+    locator.SetDataSet(aorta_surf)
+    locator.BuildLocator()
+    idx_min = locator.FindClosestPoint(com_phys_1)
+    
+    if verbose:
+        print("Dijkstra on aorta+LV surface to find highest point")
+    dijkstra = vtk.vtkDijkstraGraphGeodesicPath()
+    dijkstra.SetInputData(aorta_surf)
+    dijkstra.SetStartVertex(idx_min)
+    dijkstra.Update()
+    weights = vtk.vtkDoubleArray()
+    dijkstra.GetCumulativeWeights(weights)
+    aorta_surf.GetPointData().SetScalars(weights)
+    
+    w_temp = vtk_to_numpy(weights)
+    idx_max = np.argmax(w_temp)
+    max_p = aorta_surf.GetPoint(idx_max)
+    end_p = max_p
+    
+    
+    
+    """
+    Writing output files
+    """  
+    
+    f_p_out = open(start_p_out_file, "w")
+    f_p_out.write(f"{com_phys_1[0]} {com_phys_1[1]} {com_phys_1[2]}")
+    f_p_out.close()
+
+    
+    end_p_out = open(end_p_out_file, "w")
+    end_p_out.write(f"{end_p[0]} {end_p[1]} {end_p[2]}")
+    end_p_out.close()
+
+
+    return True
+
+
 def compute_centerline_landmarks_for_aorta_type_1(
     segm_folder,
     lm_folder,
@@ -3868,6 +4077,17 @@ def compute_centerline_landmarks_based_on_scan_type(
             output_folder,
             use_ts_org_segmentations=use_ts_org_segmentations,
         )
+    
+    if scan_type == "3":
+        return compute_centerline_landmarks_for_aorta_type_3(
+            segm_folder,
+            lm_folder,
+            verbose,
+            quiet,
+            write_log_file,
+            output_folder,
+            use_ts_org_segmentations=use_ts_org_segmentations,
+        )
 
     msg = f"Can not compute centerline landmarks for scan type {scan_type} for {segm_folder}"
     if not quiet:
@@ -3903,7 +4123,7 @@ def extract_surfaces_for_centerlines(
 
     scan_type = scan_type_stats["scan_type"]
 
-    if scan_type in ["1", "1b", "1c", "1d", "2"]:
+    if scan_type in ["1", "1b", "1c", "1d", "2", "3"]:
         # aorta_segm_in = f"{segm_folder}aorta_lumen.nii.gz"
         # if use_ts_org_segmentations:
         #     aorta_segm_in = f"{segm_folder}aorta_lumen_hires_ts_org.nii.gz"
@@ -4032,7 +4252,7 @@ def compute_center_line_using_skeleton(segm_folder, stats_folder, lm_folder, sur
 
     scan_type = scan_type_stats["scan_type"]
 
-    if scan_type in ["1", "1b", "1c", "1d", "2"]:
+    if scan_type in ["1", "1b", "1c", "1d", "2","3"]:
         aorta_segm_in = f"{segm_folder}aorta_lumen_extended.nii.gz"
         if use_ts_org_segmentations:
             aorta_segm_in = f"{segm_folder}aorta_lumen_extended_ts_org.nii.gz"
@@ -5334,7 +5554,7 @@ def compute_sinutubular_junction_and_sinus_of_valsalva_from_max_and_min_cut_area
         return False
 
     scan_type = scan_type_stats["scan_type"]
-    if scan_type not in ["1", "1b", "1c", "1d", "5"]:
+    if scan_type not in ["1", "1b", "1c", "1d", "5", "3"]:
         msg = f"We can not compute sinotubular junction and valsalva for scan type {scan_type}"
         if verbose:
             print(msg)

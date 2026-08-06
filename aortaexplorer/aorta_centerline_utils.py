@@ -192,7 +192,7 @@ class AortaCenterliner:
         if self.verbose:
             print(f"Resampling took {elapsed_time:.2f} seconds")
 
-        if self.aorta_type in ["2", "5"]:
+        if self.aorta_type in ["2", "5", "3"]:         ## Added type 3, Seems reasonable to pad these as well
             if self.verbose:
                 print(f"Extending axial slices by copying for type {self.aorta_type} aorta")
             start_time = time.time()
@@ -425,6 +425,9 @@ class AortaCenterliner:
             min_endpoints = 3  # Top of the aorta + two iliac arteries
         if self.aorta_type == "5":
             min_endpoints = 2  # Just the aorta in the ascending and descending parts
+        if self.aorta_type == "3":
+            min_endpoints = 2  # Just the aorta in the root and descending parts
+
 
         conn = vtk.vtkConnectivityFilter()
         conn.SetInputData(self.skeleton_polydata)
