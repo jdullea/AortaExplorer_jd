@@ -837,30 +837,50 @@ class RenderAortaData(RenderTotalSegmentatorData):
         if "annulus_aortic_length" in ati_stats:
             cl_length = ati_stats["annulus_aortic_length"]
             self.message_text += f"\nTotal aortic length: {cl_length / 10.0:.1f} cm\n"
+        elif "full_scan_aortic_length" in ati_stats:
+            cl_length = ati_stats["full_scan_aortic_length"]
+            self.message_text += f"\nTotal aortic length: {cl_length / 10.0:.1f} cm\n"
+        
         local_txt += "\nAortic tortuosity index:\n"
         if "annulus_aortic_tortuosity_index" in ati_stats:
             any_ati = True
             ati = ati_stats["annulus_aortic_tortuosity_index"]
             local_txt += f"Annulus: {ati:.2f}\n"
+        
+        ati = ati_stats.get("full_scan_aortic_tortuosity_index", None)
+        if ati:
+            any_ati = True
+            local_txt += f"Full scan (Type 3): {ati:.2f}\n"
+
         ati = ati_stats.get("ascending_aortic_tortuosity_index", None)
         if ati:
             any_ati = True
             local_txt += f"Ascending: {ati:.2f}\n"
+        
         ati = ati_stats.get("descending_aortic_tortuosity_index", None)
         if ati:
             any_ati = True
             local_txt += f"Descending: {ati:.2f}\n"
+        
+        ati = ati_stats.get("thoracic_aortic_tortuosity_index", None)
+        if ati:
+            any_ati = True
+            local_txt += f"Thoracic: {ati:.2f}\n"
+        
         if "diaphragm_aortic_tortuosity_index" in ati_stats:
             any_ati = True
             ati = ati_stats["diaphragm_aortic_tortuosity_index"]
-            local_txt += f"Diaphragm: {ati:.2f}\n"
+            local_txt += f"Diaphragm to bifurcation: {ati:.2f}\n"
+        
         if "infrarenal_aortic_tortuosity_index" in ati_stats:
             any_ati = True
             ati = ati_stats["infrarenal_aortic_tortuosity_index"]
-            local_txt += f"Infrarenal: {ati:.2f}\n"
+            local_txt += f"Infrarenal to bifurcation: {ati:.2f}\n"
 
         if any_ati:
             self.message_text += local_txt
+            print(self.message_text)
+
 
     def set_aortic_aneurysm_sac_statistics(self, stats_folder):
         type_file = f"{stats_folder}/aorta_scan_type.json"
@@ -875,7 +895,7 @@ class RenderAortaData(RenderTotalSegmentatorData):
             return
         scan_type = scan_type_stats["scan_type"]
 
-        if scan_type in ["1", "2", "4", "5"]:
+        if scan_type in ["1", "2", "3", "4", "5"]:
             stats = read_json_file(stats_file)
             if not stats:
                 print(f"Could not read {stats_file}")
@@ -917,7 +937,7 @@ class RenderAortaData(RenderTotalSegmentatorData):
             return
         scan_type = scan_type_stats["scan_type"]
 
-        if scan_type in ["1", "2", "5", "4"]:
+        if scan_type in ["1", "2", "3", "5", "4"]:
             stats = read_json_file(stats_file)
             if not stats:
                 print(f"Could not read {stats_file}")

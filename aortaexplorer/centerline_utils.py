@@ -780,6 +780,172 @@ def compute_tortuosity_index_based_on_scan_type(
                 ati_stats["abdominal_aortic_tortuosity_index"] = aortic_tortuosity_index
                 ati_stats["abdominal_aortic_length"] = aortic_length
                 ati_stats["abdominal_geometric_length"] = geometric_length
+                
+        '''
+        Thoracic aorta TI
+        From the diaphragm to VA junction
+        This is comparable from scan to scan
+        '''
+        if diaphragm:
+            geometric_length = np.linalg.norm(np.array(ventri_pos) 
+                                              - np.array(diaphragm_pos))        
+            aortic_length = ventri_cl_dist - diaphragm_cl_dist
+        if geometric_length > 0 and aortic_length > 0:
+            aortic_tortuosity_index = aortic_length / geometric_length
+            if verbose:
+                print(f"Computed thoracic tortuosity index: {aortic_tortuosity_index:.2f}")
+            ati_stats["thoracic_aortic_tortuosity_index"] = aortic_tortuosity_index
+            ati_stats["thoracic_aortic_length"] = aortic_length
+            ati_stats["thoracic_geometric_length"] = geometric_length
+
+
+    # 3: Thoracic Aorta
+    elif scan_type == "3":
+        
+        cl_file = f"{cl_folder}aorta_centerline.vtp"
+        if not os.path.exists(cl_file):
+            msg = f"Missing file {cl_file} - cannot compute tortuosity"
+            if not quiet:
+                print(msg)
+            if write_log_file:
+                write_message_to_log_file(
+                    base_dir=output_folder, message=msg, level="error"
+                )
+            return None
+
+        pd = vtk.vtkXMLPolyDataReader()
+        pd.SetFileName(cl_file)
+        pd.Update()
+        cl = pd.GetOutput()
+        
+        
+        if cl.GetNumberOfPoints() < 2:
+            msg = f"Centerline in {cl_file} has less than 2 points - cannot compute tortuosity"
+            if not quiet:
+                print(msg)
+            if write_log_file:
+                write_message_to_log_file(
+                    base_dir=output_folder, message=msg, level="error"
+                )
+            return None
+        
+        '''
+        Ascending Aortic Tortuosity Index computed from the arch to 
+        ventrial-aortic junction
+        '''
+        # The point at the annulus (the ventrial-aortic junction)
+        ventri = read_json_file(ventri_in)
+        if not ventri:
+            msg = f"Missing file {ventri_in} - cannot compute tortuosity"
+            if not quiet:
+                print(msg)
+            if write_log_file:
+                write_message_to_log_file(
+                    base_dir=output_folder, message=msg, level="error"
+                )
+            return ati_stats
+
+        ventri_cl_dist = ventri["ventri_cl_dist"]
+        ventri_pos = ventri["ventri_cl_pos"]
+
+        # Ascending Aortic Tortuosity Index
+        arch = read_json_file(aortic_arch_in)
+        if not arch:
+            msg = f"Missing file {aortic_arch_in} - cannot compute tortuosity"
+            if not quiet:
+                print(msg)
+            if write_log_file:
+                write_message_to_log_file(
+                    base_dir=output_folder, message=msg, level="error"
+                )
+            return ati_stats
+        ascending_cl_dist = arch["max_cl_dist"]
+        ascending_pos = arch["max_cl_pos"]
+        geometric_length = np.linalg.norm(
+            np.array(ascending_pos) - np.array(ventri_pos)
+        )
+        aortic_length = ventri_cl_dist - ascending_cl_dist
+
+        if geometric_length > 0 and aortic_length > 0:
+            aortic_tortuosity_index = aortic_length / geometric_length
+            if verbose:
+                print(f"Computed ascending tortuosity index: {aortic_tortuosity_index:.2f}")
+            ati_stats["ascending_aortic_tortuosity_index"] = aortic_tortuosity_index
+            ati_stats["ascending_aortic_length"] = aortic_length
+            ati_stats["ascending_geometric_length"] = geometric_length
+
+
+        '''
+        Decending Aorta Tortuosity Index
+        From start of decending aorta (end of arch) to bottom of scan
+        '''
+        # The start point at the bottom of the scan
+        start_p_name = f"{lm_folder}aorta_start_point.txt"
+        start_p = read_landmarks(start_p_name)
+
+        # The start point of the centerline (close to bottom of scan)
+        start_cl_p = cl.GetPoint(0)
+        
+        add_distance_start = np.linalg.norm(np.array(start_p) - np.array(start_cl_p))
+        
+        
+        arch_cl_dist = arch["min_cl_dist"]
+        arch_pos = arch["min_cl_pos"]
+                
+        diaphragm = read_json_file(diaphragm_in)
+        if diaphragm:
+            diaphragm_cl_dist = diaphragm["diaphragm_cl_dist"]
+            diaphragm_pos = diaphragm["diaphragm_cl_pos"]
+            geometric_length = np.linalg.norm(np.array(arch_pos) - np.array(diaphragm_pos))
+            aortic_length = arch_cl_dist - diaphragm_cl_dist
+            
+        else:   # no diaphragm — read to bottom-of-scan cut instead
+            geometric_length = np.linalg.norm(np.array(start_p) - np.array(arch_pos))
+            aortic_length = arch_cl_dist + add_distance_start
+        
+        if geometric_length > 0 and aortic_length > 0:
+            aortic_tortuosity_index = aortic_length / geometric_length
+            if verbose:
+                print(f"Computed descending tortuosity index: {aortic_tortuosity_index:.2f}")
+            ati_stats["descending_aortic_tortuosity_index"] = aortic_tortuosity_index
+            ati_stats["descending_aortic_length"] = aortic_length
+            ati_stats["descending_geometric_length"] = geometric_length
+
+
+        '''
+        Full Scan TI
+        From the bottom of the scan to the VA junction
+        Entire aorta in this scan
+        '''
+        geometric_length = np.linalg.norm(np.array(start_p) - np.array(ventri_pos))
+        aortic_length = ventri_cl_dist + add_distance_start
+        
+        if geometric_length > 0 and aortic_length > 0:
+            aortic_tortuosity_index = aortic_length / geometric_length
+            if verbose:
+                print(f"Computed full scan tortuosity index: {aortic_tortuosity_index:.2f}")
+            ati_stats["full_scan_aortic_tortuosity_index"] = aortic_tortuosity_index
+            ati_stats["full_scan_aortic_length"] = aortic_length
+            ati_stats["full_scan_geometric_length"] = geometric_length
+            
+        '''
+        Thoracic aorta TI
+        From the diaphragm to VA junction
+        This is comparable from scan to scan, unlike Full Scan TI for FOV 3
+        '''
+        if diaphragm:
+            geometric_length = np.linalg.norm(np.array(ventri_pos) 
+                                              - np.array(diaphragm_pos))        
+            aortic_length = ventri_cl_dist - diaphragm_cl_dist
+        if geometric_length > 0 and aortic_length > 0:
+            aortic_tortuosity_index = aortic_length / geometric_length
+            if verbose:
+                print(f"Computed thoracic tortuosity index: {aortic_tortuosity_index:.2f}")
+            ati_stats["thoracic_aortic_tortuosity_index"] = aortic_tortuosity_index
+            ati_stats["thoracic_aortic_length"] = aortic_length
+            ati_stats["thoracic_geometric_length"] = geometric_length
+
+
     # Two parts (cardiac)
     elif scan_type == "5":
         # Start point is the top of the scan
@@ -894,6 +1060,8 @@ def compute_tortuosity_index_based_on_scan_type(
                 )
                 ati_stats["descending_aortic_length"] = aortic_length
                 ati_stats["descending_geometric_length"] = geometric_length
+                
+                
     # Two parts (cardiac) but also bottom of aorta
     elif scan_type == "4":
         # Start point is the top of the scan
